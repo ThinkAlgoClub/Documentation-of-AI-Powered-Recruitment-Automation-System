@@ -1,0 +1,176 @@
+# **📌 Phase 4: Implement AI-Based Job Matching Algorithm**  
+In this phase, we will:  
+✅ **Extract skills and experience from resumes**  
+✅ **Store job descriptions and resumes in a database**  
+✅ **Use NLP to match resumes with job descriptions**  
+✅ **Return the best-matching job recommendations**  
+
+---
+
+## **🔹 Step 19: Create `Job` Model for Storing Job Descriptions**  
+
+### **19.1 Modify `resume/models.py` to Add Job Model**  
+Open `resume/models.py` and add:  
+```python
+class Job(models.Model):
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    required_skills = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.title
+```
+
+### **19.2 Create Migration and Apply Changes**  
+```sh
+python manage.py makemigrations resume
+python manage.py migrate
+```
+
+### **19.3 Register Job Model in Django Admin (`resume/admin.py`)**  
+```python
+from django.contrib import admin
+from .models import Resume, Job
+
+admin.site.register(Resume)
+admin.site.register(Job)
+```
+
+---
+
+## **🔹 Step 20: Create Job Serializer and API**  
+
+### **20.1 Create `resume/serializers.py`**  
+Modify `resume/serializers.py` to add:  
+```python
+class JobSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Job
+        fields = '__all__'
+```
+
+### **20.2 Create Job API in `resume/views.py`**  
+Modify `resume/views.py` and add:  
+```python
+from rest_framework import generics
+from .models import Job
+from .serializers import JobSerializer
+
+class JobListCreateView(generics.ListCreateAPIView):
+    queryset = Job.objects.all()
+    serializer_class = JobSerializer
+```
+
+### **20.3 Define Job API Routes (`resume/urls.py`)**  
+Modify `resume/urls.py` to include:  
+```python
+from .views import ResumeUploadView, JobListCreateView
+
+urlpatterns = [
+    path('upload/', ResumeUploadView.as_view(), name='resume-upload'),
+    path('jobs/', JobListCreateView.as_view(), name='job-list-create'),
+]
+```
+
+### **20.4 Test API via cURL**  
+```sh
+curl -X POST http://127.0.0.1:8000/api/resume/jobs/ \
+    -H "Content-Type: application/json" \
+    -d '{
+          "title": "Software Engineer",
+          "description": "Develop web applications using Django and React",
+          "required_skills": "Python, Django, REST API, React, JavaScript"
+        }'
+```
+
+---
+
+## **🔹 Step 21: Implement AI Job Matching Algorithm**  
+
+### **21.1 Modify `resume/utils.py` to Extract Skills**  
+Modify `resume/utils.py` and add:  
+```python
+import spacy
+from collections import Counter
+
+nlp = spacy.load("en_core_web_sm")
+
+def extract_skills(text):
+    doc = nlp(text)
+    skills = [token.text.lower() for token in doc if token.pos_ in ["NOUN", "PROPN"]]
+    return list(set(skills))
+
+def match_jobs(resume_text):
+    skills = extract_skills(resume_text)
+    job_matches = []
+    
+    for job in Job.objects.all():
+        job_skills = set(job.required_skills.lower().split(", "))
+        match_score = len(job_skills.intersection(skills))
+        job_matches.append((job, match_score))
+
+    job_matches.sort(key=lambda x: x[1], reverse=True)
+    return [{"title": job.title, "score": score} for job, score in job_matches]
+```
+
+---
+
+## **🔹 Step 22: Integrate AI Matching into Resume API**  
+
+Modify `resume/views.py`:  
+```python
+from .utils import extract_text, analyze_resume, match_jobs
+
+class ResumeUploadView(generics.CreateAPIView):
+    queryset = Resume.objects.all()
+    serializer_class = ResumeSerializer
+    parser_classes = (MultiPartParser, FormParser)
+
+    def post(self, request, *args, **kwargs):
+        file_serializer = ResumeSerializer(data=request.data)
+        if file_serializer.is_valid():
+            resume = file_serializer.save()
+            file_path = os.path.join(settings.MEDIA_ROOT, str(resume.file))
+
+            extracted_text = extract_text(file_path)
+            analyzed_data = analyze_resume(extracted_text)
+            job_recommendations = match_jobs(extracted_text)
+
+            return Response({"resume_data": file_serializer.data, "analysis": analyzed_data, "job_recommendations": job_recommendations}, status=status.HTTP_201_CREATED)
+        else:
+            return Response(file_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+```
+
+---
+
+## **🔹 Step 23: Test AI-Based Job Matching API**  
+
+### **23.1 Upload a Resume and Get Matching Jobs**
+```sh
+curl -X POST http://127.0.0.1:8000/api/resume/upload/ \
+    -F "name=John Doe" \
+    -F "email=john@example.com" \
+    -F "phone=1234567890" \
+    -F "file=@/path/to/resume.pdf"
+```
+**✅ Expected Response:**  
+```json
+{
+    "resume_data": {
+        "name": "John Doe",
+        "email": "john@example.com",
+        "phone": "1234567890",
+        "file": "/media/resumes/1_resume.pdf"
+    },
+    "analysis": {
+        "entities": [
+            ["Python Developer", "JOB_TITLE"],
+            ["Google", "ORG"]
+        ]
+    },
+    "job_recommendations": [
+        {"title": "Software Engineer", "score": 3}
+    ]
+}
+```
